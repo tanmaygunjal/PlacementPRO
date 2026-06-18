@@ -15,7 +15,10 @@ except Exception as e:
 
 
 # Ensure upload directory exists
-os.makedirs("uploads/resumes", exist_ok=True)
+try:
+    os.makedirs("/tmp/uploads/resumes" if os.environ.get("VERCEL") else "uploads/resumes", exist_ok=True)
+except Exception:
+    pass
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -83,8 +86,14 @@ if not os.path.exists(frontend_dir):
     frontend_dir = os.path.join(BASE_DIR, "..", "frontend")
 
 # Ensure frontend directory exists
-os.makedirs(frontend_dir, exist_ok=True)
+try:
+    os.makedirs(frontend_dir, exist_ok=True)
+except Exception:
+    pass
 
 # Mount frontend files at root
-app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+try:
+    app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+except Exception as e:
+    print(f"Warning: Could not mount frontend static directory: {e}")
 

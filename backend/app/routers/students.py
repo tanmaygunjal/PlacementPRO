@@ -24,8 +24,11 @@ from app.auth.dependencies import get_current_active_user, RoleChecker
 
 router = APIRouter(prefix="/students", tags=["Students"])
 
-UPLOAD_DIR = "uploads/resumes"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+UPLOAD_DIR = "/tmp/uploads/resumes" if os.environ.get("VERCEL") else "uploads/resumes"
+try:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+except Exception:
+    pass
 
 @router.post("/profile", response_model=StudentProfileResponse, status_code=status.HTTP_201_CREATED)
 def create_profile(
