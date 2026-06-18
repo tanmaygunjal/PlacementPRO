@@ -1,0 +1,27 @@
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment files containing secrets
+.env
+backend/.env
+.env.*
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.cache/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploads and temporary files
+uploads/
+backend/uploads/
+.DS_Store

@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: placementpro_db
+    restart: always
+    environment:
+      POSTGRES_USER: placement_user
+      POSTGRES_PASSWORD: placement_password
+      POSTGRES_DB: placementpro
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  web:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: placementpro_web
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://placement_user:placement_password@db:5432/placementpro
+      - SECRET_KEY=super-secret-jwt-key-configured-via-env-vars
+    volumes:
+      - ./backend/uploads:/workspace/uploads
+
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
