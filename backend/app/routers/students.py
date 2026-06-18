@@ -24,11 +24,7 @@ from app.auth.dependencies import get_current_active_user, RoleChecker
 
 router = APIRouter(prefix="/students", tags=["Students"])
 
-UPLOAD_DIR = "/tmp/uploads/resumes" if os.environ.get("VERCEL") else "uploads/resumes"
-try:
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-except Exception:
-    pass
+UPLOAD_DIR = "/tmp/uploads"
 
 @router.post("/profile", response_model=StudentProfileResponse, status_code=status.HTTP_201_CREATED)
 def create_profile(
@@ -106,6 +102,7 @@ async def upload_resume(
                     raise Exception(f"Upload failed: {str(upload_err)} | Update fallback failed: {str(update_err)}")
         else:
             # Fallback to local storage (e.g. during tests or if Supabase keys are placeholders)
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
             filepath = os.path.join(UPLOAD_DIR, filename)
             with open(filepath, "wb") as f:
                 f.write(contents)

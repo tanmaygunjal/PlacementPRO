@@ -16,7 +16,7 @@ except Exception as e:
 
 # Ensure upload directory exists
 try:
-    os.makedirs("/tmp/uploads/resumes" if os.environ.get("VERCEL") else "uploads/resumes", exist_ok=True)
+    os.makedirs("/tmp/uploads" if os.environ.get("VERCEL") else "uploads/resumes", exist_ok=True)
 except Exception:
     pass
 
