@@ -11,30 +11,12 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-def rewrite_supabase_url(url: str) -> str:
-    if not url:
-        return url
-    pattern = r"^(?P<dialect>[a-zA-Z0-9+_]+)://(?P<user>[^:]+):(?P<password>[^@]+)@(?P<host>[^:/]+)(?::(?P<port>\d+))?/(?P<db>.+)$"
-    match = re.match(pattern, url)
-    if not match:
-        return url
-    gd = match.groupdict()
-    dialect = gd['dialect']
-    user = gd['user']
-    password = gd['password']
-    host = gd['host']
-    port = gd['port'] or "5432"
-    db = gd['db']
-    if "pooler.supabase.com" in host and "." in user:
-        real_user, project_ref = user.split(".", 1)
-        host = f"db.{project_ref}.supabase.co"
-        port = "5432"
-        user = real_user
-    if dialect in ["postgresql", "postgres"]:
-        dialect = "postgresql+pg8000"
-    return f"{dialect}://{user}:{password}@{host}:{port}/{db}"
-
-DATABASE_URL = rewrite_supabase_url(DATABASE_URL)
+# Force SQLAlchemy to use pg8000 dialect for PostgreSQL on Vercel
+if DATABASE_URL and (DATABASE_URL.startswith("postgresql://") or DATABASE_URL.startswith("postgres://")):
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+pg8000://", 1)
+    else:
+        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+pg8000://", 1)
 
 engine = create_engine(
     DATABASE_URL
