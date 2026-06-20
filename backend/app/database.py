@@ -11,8 +11,12 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# Check if DATABASE_URL is empty or not set
+if not DATABASE_URL:
+    DATABASE_URL = "sqlite:///./placementpro.db"
+
 # Force SQLAlchemy to use pg8000 dialect for PostgreSQL on Vercel
-if DATABASE_URL and (DATABASE_URL.startswith("postgresql://") or DATABASE_URL.startswith("postgres://")):
+if DATABASE_URL.startswith("postgresql://") or DATABASE_URL.startswith("postgres://"):
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+pg8000://", 1)
     else:
