@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 
 
 from app.database import engine, Base
-from app.routers import auth, students, jobs, applications
+from app.routers import auth, students, jobs, applications, admin, external_jobs, resume_analyzer
 
 # Create DB tables (primarily useful for simple local SQLite running; migrations cover Production)
 try:
@@ -38,36 +38,32 @@ def health():
         "status": "connected"
     }
 
-class UserCreate(BaseModel):
-    name: str
-    email: str
-    password: str
+import time
+from fastapi import Request
 
-@app.post("/register")
-def register(
-    user: UserCreate,
-    db: Session = Depends(get_db)
-):
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    method = request.method
+    url = str(request.url)
+    print(f"\n>>> [FastAPI Request] {method} {url}")
+    
+    response = await call_next(request)
+    
+    process_time = (time.time() - start_time) * 1000
+    print(f"<<< [FastAPI Response] Status: {response.status_code} (took {process_time:.2f}ms)\n")
+    return response
 
-    new_user = User(
-        name=user.name,
-        email=user.email,
-        password=user.password
-    )
+# Configure CORS for frontend compatibility with explicit origins
+origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://placement-pro.vercel.app",
+]
 
-    db.add(new_user)
-    db.commit()
-
-    return {
-        "message": "Registered"
-    }
-
-
-
-# Configure CORS for frontend compatibility
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -78,6 +74,9 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(students.router, prefix="/api")
 app.include_router(jobs.router, prefix="/api")
 app.include_router(applications.router, prefix="/api")
+app.include_router(admin.router, prefix="/api")
+app.include_router(external_jobs.router, prefix="/api")
+app.include_router(resume_analyzer.router, prefix="/api")
 
 # Resolve frontend directory dynamically
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -96,4 +95,11 @@ try:
     app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 except Exception as e:
     print(f"Warning: Could not mount frontend static directory: {e}")
+
+import asyncio
+from app.services.external_job_service import start_background_scraping
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(start_background_scraping())
 

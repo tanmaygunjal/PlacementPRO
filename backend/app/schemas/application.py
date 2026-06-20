@@ -1,8 +1,8 @@
 from pydantic import BaseModel
 from datetime import datetime
-from app.models.job import ApplicationStatus
+from typing import Optional
 from app.schemas.job import JobDetailResponse
-from app.schemas.user import UserDetailResponse
+from app.schemas.user import StudentResponse
 
 class ApplicationBase(BaseModel):
     job_id: int
@@ -11,21 +11,20 @@ class ApplicationCreate(ApplicationBase):
     pass
 
 class ApplicationUpdate(BaseModel):
-    status: ApplicationStatus
+    status: str  # applied, shortlisted, interviewing, offered, rejected
 
 class ApplicationResponse(ApplicationBase):
     id: int
     student_id: int
-    status: ApplicationStatus
+    status: str
     applied_at: datetime
-    updated_at: datetime
 
     class Config:
         from_attributes = True
 
 class ApplicationDetailResponse(ApplicationResponse):
     job: JobDetailResponse
-    student: UserDetailResponse
+    student: StudentResponse
 
     class Config:
         from_attributes = True

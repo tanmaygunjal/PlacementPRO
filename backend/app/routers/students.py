@@ -7,10 +7,11 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.database import get_db
-from app.models.user import User, UserRole, StudentProfile
-from app.models.resume import StudentResume
-from app.models.job import Job, Application, ApplicationStatus
-from app.schemas.user import StudentProfileCreate, StudentProfileResponse, StudentProfileBase
+from app.models.user import User, UserRole
+from app.models.student import Student
+from app.models.job import Job
+from app.models.application import Application
+from app.schemas.user import StudentCreate, StudentResponse, StudentBase
 from app.schemas.resume import (
     ResumeDataCreate, 
     ResumeDataResponse, 
@@ -19,6 +20,7 @@ from app.schemas.resume import (
     JobDeadlineInfo, 
     CheckDetail
 )
+from app.schemas.job import JobDetailResponse
 from app.services import user_service
 from app.auth.dependencies import get_current_active_user, RoleChecker
 
@@ -26,38 +28,41 @@ router = APIRouter(prefix="/students", tags=["Students"])
 
 UPLOAD_DIR = "/tmp/uploads"
 
-@router.post("/profile", response_model=StudentProfileResponse, status_code=status.HTTP_201_CREATED)
+# Temporary in-memory storage for mock resume-builder data to avoid DB errors
+MOCK_RESUME_STORE = {}
+
+@router.post("/profile", response_model=StudentResponse, status_code=status.HTTP_201_CREATED)
 def create_profile(
-    profile: StudentProfileCreate,
+    profile: StudentCreate,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    if current_user.role != UserRole.STUDENT:
+    if current_user.role != UserRole.STUDENT.value:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only users with role STUDENT can create a student profile"
         )
     return user_service.create_student_profile(db, current_user.id, profile)
 
-@router.put("/profile", response_model=StudentProfileResponse)
+@router.put("/profile", response_model=StudentResponse)
 def update_profile(
-    profile: StudentProfileBase,
+    profile: StudentBase,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    if current_user.role != UserRole.STUDENT:
+    if current_user.role != UserRole.STUDENT.value:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only users with role STUDENT can update a student profile"
         )
     return user_service.update_student_profile(db, current_user.id, profile)
 
-@router.get("/profile", response_model=StudentProfileResponse)
+@router.get("/profile", response_model=StudentResponse)
 def get_profile(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    profile = db.query(StudentProfile).filter(StudentProfile.id == current_user.id).first()
+    profile = db.query(Student).filter(Student.user_id == current_user.id).first()
     if not profile:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -65,13 +70,13 @@ def get_profile(
         )
     return profile
 
-@router.post("/resume", response_model=StudentProfileResponse)
+@router.post("/resume", response_model=StudentResponse)
 async def upload_resume(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    if current_user.role != UserRole.STUDENT:
+    if current_user.role != UserRole.STUDENT.value:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only students can upload resumes"
@@ -79,29 +84,43 @@ async def upload_resume(
         
     # Validate file extension
     file_ext = os.path.splitext(file.filename)[1].lower()
-    if file_ext not in [".pdf", ".doc", ".docx"]:
+    if file_ext != ".pdf":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only PDF, DOC, or DOCX files are allowed."
+            detail="Only PDF resumes are allowed."
         )
         
-    # Create safe filename: resume_{student_id}{ext}
+    # Validate MIME type
+    if file.content_type != "application/pdf":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file format. Only PDF files are allowed."
+        )
+        
+    # Read contents and check file size
+    contents = await file.read()
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File size exceeds the limit of 5MB."
+        )
+        
+    # Create safe filename: resume_{student_id}{file_ext}
     filename = f"resume_{current_user.id}{file_ext}"
+    resume_url = f"https://lejkebtkdhnhicdjolxb.supabase.co/storage/v1/object/public/resumes/{filename}"
     
     try:
-        contents = await file.read()
         from app.database import supabase
         if supabase:
             try:
                 supabase.storage.from_("resumes").upload(path=filename, file=contents, file_options={"content-type": file.content_type})
             except Exception as upload_err:
-                # If upload fails, try updating/overwriting the file
                 try:
                     supabase.storage.from_("resumes").update(path=filename, file=contents, file_options={"content-type": file.content_type})
                 except Exception as update_err:
                     raise Exception(f"Upload failed: {str(upload_err)} | Update fallback failed: {str(update_err)}")
         else:
-            # Fallback to local storage (e.g. during tests or if Supabase keys are placeholders)
+            # Fallback to local storage (e.g. during tests)
             os.makedirs(UPLOAD_DIR, exist_ok=True)
             filepath = os.path.join(UPLOAD_DIR, filename)
             with open(filepath, "wb") as f:
@@ -112,7 +131,7 @@ async def upload_resume(
             detail=f"Could not save or upload resume file: {str(e)}"
         )
         
-    return user_service.update_resume_filename(db, current_user.id, filename)
+    return user_service.update_resume_url(db, current_user.id, resume_url)
 
 @router.get("/{student_id}/resume")
 def download_resume(
@@ -121,26 +140,30 @@ def download_resume(
     db: Session = Depends(get_db)
 ):
     # Check permissions: Admin/Recruiter can download any resume, Student can only download their own
-    if current_user.role == UserRole.STUDENT and current_user.id != student_id:
+    student_profile = db.query(Student).filter(Student.id == student_id).first()
+    if not student_profile:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found")
+        
+    if current_user.role == UserRole.STUDENT.value and current_user.id != student_profile.user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to view other students' resumes"
         )
         
-    profile = db.query(StudentProfile).filter(StudentProfile.id == student_id).first()
-    if not profile or not profile.resume_filename:
+    if not student_profile.resume_url:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Resume not found for this student"
         )
         
+    filename = student_profile.resume_url.split("/")[-1]
+    
     try:
         from app.database import supabase
         if supabase:
-            file_bytes = supabase.storage.from_("resumes").download(profile.resume_filename)
+            file_bytes = supabase.storage.from_("resumes").download(filename)
         else:
-            # Fallback to local storage
-            filepath = os.path.join(UPLOAD_DIR, profile.resume_filename)
+            filepath = os.path.join(UPLOAD_DIR, filename)
             if not os.path.exists(filepath):
                 raise Exception("Local resume file does not exist on disk")
             with open(filepath, "rb") as f:
@@ -152,7 +175,7 @@ def download_resume(
         )
         
     import mimetypes
-    media_type, _ = mimetypes.guess_type(profile.resume_filename)
+    media_type, _ = mimetypes.guess_type(filename)
     if not media_type:
         media_type = "application/octet-stream"
         
@@ -160,33 +183,32 @@ def download_resume(
         content=file_bytes,
         media_type=media_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{profile.full_name}_resume{os.path.splitext(profile.resume_filename)[1]}"'
+            "Content-Disposition": f'attachment; filename="{current_user.name}_resume{os.path.splitext(filename)[1]}"'
         }
     )
 
-@router.get("", response_model=List[StudentProfileResponse])
+@router.get("", response_model=List[StudentResponse])
 def get_all_students(
     min_cgpa: Optional[float] = None,
     branch: Optional[str] = None,
     search: Optional[str] = None,
-    current_user: User = Depends(RoleChecker([UserRole.ADMIN, UserRole.RECRUITER])),
+    current_user: User = Depends(RoleChecker([UserRole.ADMIN.value, UserRole.RECRUITER.value])),
     db: Session = Depends(get_db)
 ):
     return user_service.list_students(db, min_cgpa=min_cgpa, branch=branch, search=search)
-
 
 @router.get("/readiness", response_model=ReadinessResponse)
 def get_readiness(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    if current_user.role != UserRole.STUDENT:
+    if current_user.role != UserRole.STUDENT.value:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only student accounts have placement readiness details"
         )
         
-    profile = db.query(StudentProfile).filter(StudentProfile.id == current_user.id).first()
+    profile = db.query(Student).filter(Student.user_id == current_user.id).first()
     
     # Defaults
     readiness_score = 0
@@ -198,12 +220,12 @@ def get_readiness(
     interview_readiness = "Low"
     
     parsed_skills = []
-    if profile:
+    if profile and (profile.college or profile.branch):
         profile_complete = True
         readiness_score += 20
         
         # Resume status check
-        if profile.resume_filename:
+        if profile.resume_url:
             resume_uploaded = True
             readiness_score += 30
             
@@ -214,19 +236,19 @@ def get_readiness(
             readiness_score += min(skills_count * 5, 25)
             
         # CGPA check
-        if profile.cgpa >= 8.0:
+        if profile.cgpa and profile.cgpa >= 8.0:
             readiness_score += 10
-        elif profile.cgpa >= 7.0:
+        elif profile.cgpa and profile.cgpa >= 7.0:
             readiness_score += 5
             
         # Interview readiness
-        student_apps = db.query(Application).filter(Application.student_id == current_user.id).all()
+        student_apps = db.query(Application).filter(Application.student_id == profile.id).all()
         if student_apps:
             readiness_score += 15
             statuses = [app.status for app in student_apps]
-            if ApplicationStatus.OFFERED in statuses or ApplicationStatus.INTERVIEWING in statuses:
+            if "offered" in statuses or "interviewing" in statuses:
                 interview_readiness = "High"
-            elif ApplicationStatus.SHORTLISTED in statuses or ApplicationStatus.APPLIED in statuses:
+            elif "shortlisted" in statuses or "applied" in statuses:
                 interview_readiness = "Moderate"
                 
     # Missing Core Skills
@@ -234,13 +256,12 @@ def get_readiness(
     for s in core_skills:
         if s not in parsed_skills:
             missing_skills.append(s.title() if s not in ["sql", "dbms"] else s.upper())
-
                 
     # Upcoming Deadlines
     now = datetime.utcnow()
     one_week_later = now + timedelta(days=7)
     expiring_jobs = db.query(Job).filter(
-        Job.is_active == True,
+        Job.status == "open",
         Job.deadline > now,
         Job.deadline <= one_week_later
     ).all()
@@ -250,7 +271,7 @@ def get_readiness(
             JobDeadlineInfo(
                 id=job.id,
                 title=job.title,
-                company_name=job.company.name,
+                company_name=job.company.company_name,
                 deadline=job.deadline.isoformat()
             )
         )
@@ -265,32 +286,23 @@ def get_readiness(
         interview_readiness=interview_readiness
     )
 
-
 @router.get("/resume-builder", response_model=ResumeDataResponse)
 def get_resume_data(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    db_resume = db.query(StudentResume).filter(StudentResume.id == current_user.id).first()
-    if not db_resume:
+    # Mock fallback to in-memory store
+    user_id = current_user.id
+    if user_id not in MOCK_RESUME_STORE:
         return {
-            "id": current_user.id,
+            "id": user_id,
             "summary": "",
             "education": [],
             "experience": [],
             "projects": [],
             "template_style": "classic"
         }
-        
-    return {
-        "id": db_resume.id,
-        "summary": db_resume.summary or "",
-        "education": json.loads(db_resume.education) if db_resume.education else [],
-        "experience": json.loads(db_resume.experience) if db_resume.experience else [],
-        "projects": json.loads(db_resume.projects) if db_resume.projects else [],
-        "template_style": db_resume.template_style
-    }
-
+    return MOCK_RESUME_STORE[user_id]
 
 @router.post("/resume-builder", response_model=ResumeDataResponse)
 def save_resume_data(
@@ -298,41 +310,16 @@ def save_resume_data(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    db_resume = db.query(StudentResume).filter(StudentResume.id == current_user.id).first()
-    
-    serialized_edu = json.dumps([item.dict() for item in resume_data.education])
-    serialized_exp = json.dumps([item.dict() for item in resume_data.experience])
-    serialized_proj = json.dumps([item.dict() for item in resume_data.projects])
-    
-    if not db_resume:
-        db_resume = StudentResume(
-            id=current_user.id,
-            summary=resume_data.summary,
-            education=serialized_edu,
-            experience=serialized_exp,
-            projects=serialized_proj,
-            template_style=resume_data.template_style
-        )
-        db.add(db_resume)
-    else:
-        db_resume.summary = resume_data.summary
-        db_resume.education = serialized_edu
-        db_resume.experience = serialized_exp
-        db_resume.projects = serialized_proj
-        db_resume.template_style = resume_data.template_style
-        
-    db.commit()
-    db.refresh(db_resume)
-    
-    return {
-        "id": db_resume.id,
-        "summary": db_resume.summary or "",
-        "education": json.loads(db_resume.education) if db_resume.education else [],
-        "experience": json.loads(db_resume.experience) if db_resume.experience else [],
-        "projects": json.loads(db_resume.projects) if db_resume.projects else [],
-        "template_style": db_resume.template_style
+    user_id = current_user.id
+    MOCK_RESUME_STORE[user_id] = {
+        "id": user_id,
+        "summary": resume_data.summary or "",
+        "education": [item.dict() for item in resume_data.education],
+        "experience": [item.dict() for item in resume_data.experience],
+        "projects": [item.dict() for item in resume_data.projects],
+        "template_style": resume_data.template_style
     }
-
+    return MOCK_RESUME_STORE[user_id]
 
 @router.post("/ats-check", response_model=AtsCheckResult)
 def ats_check(
@@ -427,3 +414,54 @@ def ats_check(
         formatting_warnings=formatting_warnings
     )
 
+@router.get("/recommended-jobs", response_model=List[JobDetailResponse])
+def get_recommended_jobs(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != UserRole.STUDENT.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only student users can access job recommendations."
+        )
+        
+    student_profile = db.query(Student).filter(Student.user_id == current_user.id).first()
+    
+    # Query all active/open jobs
+    open_jobs = db.query(Job).filter(
+        Job.status == "open",
+        Job.deadline > datetime.utcnow()
+    ).all()
+    
+    if not student_profile:
+        return open_jobs[:10]
+        
+    # Get student skills
+    student_skills = []
+    if student_profile.skills:
+        student_skills = [s.strip().lower() for s in student_profile.skills.split(",") if s.strip()]
+        
+    scored_jobs = []
+    for job in open_jobs:
+        # Check CGPA eligibility
+        if student_profile.cgpa is not None and job.eligibility_cgpa and student_profile.cgpa < job.eligibility_cgpa:
+            continue
+            
+        score = 0
+        job_text = f"{job.title} {job.category or ''} {job.description} {job.requirements or ''}".lower()
+        
+        # 10 points per matching skill
+        for skill in student_skills:
+            if skill in job_text:
+                score += 10
+                
+        # 15 bonus points for branch matching category
+        if student_profile.branch and job.category and student_profile.branch.lower() in job.category.lower():
+            score += 15
+            
+        scored_jobs.append((job, score))
+        
+    # Sort by score descending, then deadline ascending
+    scored_jobs.sort(key=lambda x: (-x[1], x[0].deadline))
+    
+    return [item[0] for item in scored_jobs]

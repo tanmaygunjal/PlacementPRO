@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    @apply bg-slate-900 text-slate-100 min-h-screen font-sans antialiased selection:bg-purple-500/30 selection:text-purple-200;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}

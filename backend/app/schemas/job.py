@@ -1,41 +1,31 @@
-from pydantic import BaseModel, HttpUrl, Field
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
-
-# Company Schemas
-class CompanyBase(BaseModel):
-    name: str
-    description: Optional[str] = None
-    website: Optional[str] = None
-
-class CompanyCreate(CompanyBase):
-    pass
-
-class CompanyResponse(CompanyBase):
-    id: int
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
+from app.schemas.user import CompanyResponse
 
 # Job Schemas
 class JobBase(BaseModel):
     title: str
+    category: Optional[str] = None
+    location: Optional[str] = None
+    salary: Optional[str] = None
+    experience: Optional[str] = None
     description: str
     requirements: Optional[str] = None
-    location: Optional[str] = None
-    ctc: Optional[float] = Field(None, description="CTC in LPA")
-    eligibility_cgpa: float = Field(0.0, ge=0.0, le=10.0)
     deadline: datetime
+    ctc: Optional[float] = None
+    eligibility_cgpa: float = 0.0
 
 class JobCreate(JobBase):
     company_id: int
 
+class JobUpdateStatus(BaseModel):
+    status: str  # open, closed
+
 class JobResponse(JobBase):
     id: int
     company_id: int
-    is_active: bool
-    created_at: datetime
+    status: str
 
     class Config:
         from_attributes = True

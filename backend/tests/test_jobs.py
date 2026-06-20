@@ -25,6 +25,14 @@ def test_create_company_and_job(client):
     assert co_resp.status_code == 201
     company_id = co_resp.json()["id"]
     
+    # Approve Company first (since new companies default to is_approved=False)
+    appr_resp = client.patch(
+        f"/api/admin/companies/{company_id}/approve",
+        json={"is_approved": True},
+        headers=admin_headers
+    )
+    assert appr_resp.status_code == 200
+    
     # Create Job
     job_deadline = (datetime.utcnow() + timedelta(days=5)).isoformat()
     job_resp = client.post(
@@ -45,11 +53,39 @@ def test_create_company_and_job(client):
     assert job_resp.json()["title"] == "Software Engineer"
     assert job_resp.json()["eligibility_cgpa"] == 7.5
 
+def test_job_creation_unapproved_company(client):
+    admin_headers = get_auth_headers(client, "admin@example.com", "admin")
+    
+    # Create Company (defaults to unapproved)
+    co_resp = client.post(
+        "/api/jobs/companies",
+        json={"name": "Netflix", "description": "Streaming service"},
+        headers=admin_headers
+    )
+    assert co_resp.status_code == 201
+    company_id = co_resp.json()["id"]
+    
+    # Post job to unapproved company - should fail with 403 Forbidden
+    job_deadline = (datetime.utcnow() + timedelta(days=5)).isoformat()
+    job_resp = client.post(
+        "/api/jobs",
+        json={
+            "company_id": company_id,
+            "title": "Data Scientist",
+            "description": "ML stuff",
+            "eligibility_cgpa": 7.0,
+            "deadline": job_deadline
+        },
+        headers=admin_headers
+    )
+    assert job_resp.status_code == 403
+    assert "not been approved" in job_resp.json()["detail"]
+
 def test_job_application_eligibility(client):
     admin_headers = get_auth_headers(client, "admin@example.com", "admin")
     student_headers = get_auth_headers(client, "student@example.com", "student")
     
-    # 1. Create company and job
+    # 1. Create company
     co_resp = client.post(
         "/api/jobs/companies",
         json={"name": "Meta", "description": "Social Network"},
@@ -57,6 +93,15 @@ def test_job_application_eligibility(client):
     )
     company_id = co_resp.json()["id"]
     
+    # Approve Company
+    appr_resp = client.patch(
+        f"/api/admin/companies/{company_id}/approve",
+        json={"is_approved": True},
+        headers=admin_headers
+    )
+    assert appr_resp.status_code == 200
+    
+    # Create Job
     job_deadline = (datetime.utcnow() + timedelta(days=5)).isoformat()
     job_resp = client.post(
         "/api/jobs",

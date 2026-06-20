@@ -1,8 +1,8 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 WORKDIR /workspace
 
-# Install system dependencies (e.g. gcc for compiling some packages)
+# Install system dependencies (e.g. gcc for compiling PostgreSQL drivers)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
@@ -12,16 +12,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application and frontend
+# Copy application code
 COPY backend/app/ ./app/
-COPY frontend/ ./frontend/
 
-
-
-# Create uploads directory structure
+# Create uploads directory structure (fallback local storage path)
 RUN mkdir -p uploads/resumes
 
-EXPOSE 8000
+# Default fallback port for Google Cloud Run is 8080
+EXPOSE 8080
 
-# Run FastAPI app using uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run FastAPI app using uvicorn shell wrapping to read $PORT dynamically
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
