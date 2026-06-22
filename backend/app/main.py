@@ -41,17 +41,24 @@ def health():
 import time
 from fastapi import Request
 
+import sys
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
     method = request.method
     url = str(request.url)
-    print(f"\n>>> [FastAPI Request] {method} {url}")
+    path = request.url.path
+    print(f"\n>>> [FastAPI Request] {method} {url} (path: {path})", file=sys.stderr, flush=True)
     
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        print(f"!!! [FastAPI Request Exception] {e}", file=sys.stderr, flush=True)
+        raise e
     
     process_time = (time.time() - start_time) * 1000
-    print(f"<<< [FastAPI Response] Status: {response.status_code} (took {process_time:.2f}ms)\n")
+    print(f"<<< [FastAPI Response] Status: {response.status_code} (took {process_time:.2f}ms)\n", file=sys.stderr, flush=True)
     return response
 
 # Configure CORS for frontend compatibility with explicit origins
